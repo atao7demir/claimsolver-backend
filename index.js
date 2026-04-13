@@ -56,7 +56,7 @@ ${data.phone ? `📞 ${data.phone}` : ''}
 📋 Hizmet: ${data.serviceType}
 
 📝 Açıklama:
-${data.description.substring(0, 200)}${data.description.length > 200 ? '...' : ''}
+${data.description ? data.description.substring(0, 200) + (data.description.length > 200 ? '...' : '') : 'Belirtilmedi'}
 
 ${data.hasFile ? '📎 Dosya: ' + data.fileName : '⚠️ Dosya yok'}
 
