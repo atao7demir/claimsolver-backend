@@ -246,12 +246,13 @@ app.post('/api/submit-claim', upload.single('file'), async (req, res) => {
     console.log('📝 New submission:', { name, email, serviceType });
 
     // Validate
-    if (!name || !email || !serviceType || !description) {
-      return res.status(400).json({
-        success: false,
-        error: 'Zorunlu alanlar eksik'
-      });
-    }
+    if (!name || !email || !serviceType) {
+  console.log('Validation failed:', { name, email, serviceType, description });
+  return res.status(400).json({
+    success: false,
+    error: 'Zorunlu alanlar eksik'
+  });
+}
 
     // Create submission
     const submission = {
