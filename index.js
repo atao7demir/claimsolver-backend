@@ -1,4 +1,4 @@
-// ClaimSolver Backend - Production Ready
+// ClaimSolver Backend - With Claude API
 // Railway.app deployment
 
 const express = require('express');
@@ -35,11 +35,246 @@ const CONFIG = {
   RESEND_API_KEY: process.env.RESEND_API_KEY || ''
 };
 
-// Simple in-memory database (temporary)
+// Simple in-memory database
 const submissions = [];
 
+// Service-specific prompts
+const SERVICE_PROMPTS = {
+  'tr': {
+    'CMR/FFL Analizi': `Sen ClaimSolver AI'sın - uluslararası taşımacılık ve CMR/FFL uzmanısın.
+
+KULLANICI AÇIKLAMASI:
+{description}
+
+{pdfContent}
+
+GÖREV:
+1. Başarı ihtimali hesapla (0-100%)
+2. ÖN DEĞERLENDİRME yaz (MERAK UYANDIRICI, detay verme!)
+
+ÖNEMLİ KURALLAR:
+- Spesifik madde numarası belirtme (CMR m.29, TBK 66 gibi)
+- Teknik terim kullanma
+- "Hukuki dayanak var", "Potansiyel görünüyor" gibi genel ifadeler kullan
+- Maksimum 2-3 cümle
+- Kullanıcı detayları PREMIUM RAPORDA görmeli
+
+ÇIKTI FORMATI (JSON):
+{
+  "successProbability": 75,
+  "summary": "Dosyanızda güçlü hukuki dayanak tespit edildi. Rücu süreci yönetilebilir görünüyor.",
+  "detailedAnalysis": "Detaylı analiz (sadece Telegram'a gidecek)"
+}`,
+
+    'Değer Kaybı': `Sen ClaimSolver AI'sın - araç değer kaybı uzmanısın.
+
+KULLANICI AÇIKLAMASI:
+{description}
+
+{pdfContent}
+
+GÖREV:
+Değer kaybı talebini değerlendir. ÖN DEĞERLENDİRME merak uyandırıcı olmalı!
+
+KURALLAR:
+- Spesifik hesaplama gösterme
+- "Değer kaybı potansiyeli var", "İnceleme değer kazandırabilir" gibi ifadeler
+- Maksimum 2-3 cümle
+
+ÇIKTI FORMATI (JSON):
+{
+  "successProbability": 65,
+  "summary": "Aracınızda değer kaybı potansiyeli görünüyor. Detaylı hesaplama önerilir.",
+  "detailedAnalysis": "..."
+}`,
+
+    'Kusur Değişimi': `Sen ClaimSolver AI'sın - trafik hukuku ve kusur analizi uzmanısın.
+
+KULLANICI AÇIKLAMASI:
+{description}
+
+{pdfContent}
+
+GÖREV:
+Kusur oranını değerlendir. Merak uyandır, detay verme!
+
+ÇIKTI FORMATI (JSON):
+{
+  "successProbability": 70,
+  "summary": "Kusur oranı tartışılabilir. İtiraz süreci değerlendirilebilir.",
+  "detailedAnalysis": "..."
+}`,
+
+    'Ret Dosyası Danışmanlığı': `Sen ClaimSolver AI'sın - ret dosyası uzmanısın.
+
+KULLANICI AÇIKLAMASI:
+{description}
+
+{pdfContent}
+
+ÇIKTI FORMATI (JSON):
+{
+  "successProbability": 60,
+  "summary": "Ret gerekçeleri incelenebilir. Yeniden değerlendirme fırsatı olabilir.",
+  "detailedAnalysis": "..."
+}`,
+
+    'Diğer': `Sen ClaimSolver AI'sın - sigorta hukuku uzmanısın.
+
+KULLANICI AÇIKLAMASI:
+{description}
+
+{pdfContent}
+
+ÇIKTI FORMATI (JSON):
+{
+  "successProbability": 50,
+  "summary": "Dosyanız incelemeye değer. Hukuki seçenekler değerlendirilebilir.",
+  "detailedAnalysis": "..."
+}`
+  },
+  'en': {
+    'CMR/FFL Analysis': `You are ClaimSolver AI - international transport and CMR/FFL expert.
+
+USER DESCRIPTION:
+{description}
+
+{pdfContent}
+
+TASK:
+Calculate success probability (0-100%) and write PRELIMINARY assessment (create curiosity, don't reveal details!)
+
+RULES:
+- Don't mention specific article numbers
+- Use general terms: "legal basis found", "potential identified"
+- Maximum 2-3 sentences
+- User should see details in PREMIUM REPORT
+
+OUTPUT FORMAT (JSON):
+{
+  "successProbability": 75,
+  "summary": "Strong legal basis identified in your file. Recovery process appears manageable.",
+  "detailedAnalysis": "..."
+}`,
+
+    'Diminished Value': `You are ClaimSolver AI - vehicle diminished value expert.
+
+USER DESCRIPTION:
+{description}
+
+{pdfContent}
+
+OUTPUT FORMAT (JSON):
+{
+  "successProbability": 65,
+  "summary": "Diminished value potential identified. Detailed calculation recommended.",
+  "detailedAnalysis": "..."
+}`
+  }
+};
+
+// Get prompt for service type and language
+function getPrompt(serviceType, language, description, pdfContent) {
+  const langPrompts = SERVICE_PROMPTS[language] || SERVICE_PROMPTS['tr'];
+  let prompt = langPrompts[serviceType] || langPrompts['Diğer'];
+  
+  prompt = prompt.replace('{description}', description || 'Belirtilmedi');
+  prompt = prompt.replace('{pdfContent}', pdfContent || '');
+  
+  return prompt;
+}
+
+// Claude API Analysis
+async function analyzeWithClaude(serviceType, description, fileBuffer, language = 'tr') {
+  if (!CONFIG.ANTHROPIC_API_KEY) {
+    console.log('⚠️ Claude API key not configured');
+    return {
+      successProbability: 50,
+      summary: language === 'tr' 
+        ? 'Dosyanız uzman ekibimiz tarafından değerlendirilecektir.'
+        : 'Your file will be reviewed by our expert team.',
+      detailedAnalysis: 'Manual review required'
+    };
+  }
+
+  try {
+    // Prepare content array
+    const content = [];
+    
+    // Add PDF if exists
+    if (fileBuffer) {
+      content.push({
+        type: 'document',
+        source: {
+          type: 'base64',
+          media_type: 'application/pdf',
+          data: fileBuffer.toString('base64')
+        }
+      });
+    }
+    
+    // Add prompt
+    const prompt = getPrompt(serviceType, language, description, fileBuffer ? 'PDF DOKÜMANI YÜKLENDİ - İçeriğini oku ve analiz et.' : '');
+    content.push({
+      type: 'text',
+      text: prompt
+    });
+
+    // Call Claude API
+    const response = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': CONFIG.ANTHROPIC_API_KEY,
+        'anthropic-version': '2023-06-01'
+      },
+      body: JSON.stringify({
+        model: 'claude-3-5-sonnet-20241022',
+        max_tokens: 2000,
+        messages: [{
+          role: 'user',
+          content: content
+        }]
+      })
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error('Claude API error:', errorText);
+      throw new Error('Claude API failed');
+    }
+
+    const result = await response.json();
+    const text = result.content[0].text;
+    
+    // Parse JSON response
+    const jsonMatch = text.match(/\{[\s\S]*\}/);
+    if (jsonMatch) {
+      const analysis = JSON.parse(jsonMatch[0]);
+      return analysis;
+    }
+    
+    // Fallback if no JSON
+    return {
+      successProbability: 60,
+      summary: text.substring(0, 200),
+      detailedAnalysis: text
+    };
+
+  } catch (error) {
+    console.error('❌ Claude analysis error:', error);
+    return {
+      successProbability: 50,
+      summary: language === 'tr'
+        ? 'Dosyanız uzman ekibimiz tarafından değerlendirilecektir.'
+        : 'Your file will be reviewed by our expert team.',
+      detailedAnalysis: 'Error during analysis'
+    };
+  }
+}
+
 // Telegram notification
-async function sendTelegramNotification(data) {
+async function sendTelegramNotification(data, analysis) {
   if (!CONFIG.TELEGRAM_BOT_TOKEN || !CONFIG.TELEGRAM_CHAT_ID) {
     console.log('⚠️ Telegram not configured');
     return;
@@ -56,11 +291,24 @@ ${data.phone ? `📞 ${data.phone}` : ''}
 📋 Hizmet: ${data.serviceType}
 
 📝 Açıklama:
-${data.description ? data.description.substring(0, 200) + (data.description.length > 200 ? '...' : '') : 'Belirtilmedi'}
+${data.description ? data.description.substring(0, 300) + (data.description.length > 300 ? '...' : '') : 'Belirtilmedi'}
 
 ${data.hasFile ? '📎 Dosya: ' + data.fileName : '⚠️ Dosya yok'}
 
 ━━━━━━━━━━━━━━━━━━━━
+🤖 CLAIMSOLVER AI ANALİZİ:
+
+📊 Başarı İhtimali: %${analysis.successProbability}
+
+📝 Ön Değerlendirme:
+${analysis.summary}
+
+📄 Detaylı Analiz:
+${analysis.detailedAnalysis || 'Tam analiz premium raporda'}
+
+━━━━━━━━━━━━━━━━━━━━
+💰 DURUM: ${data.paymentStatus || 'Ödeme bekliyor'}
+
 ⏰ ${new Date().toLocaleString('tr-TR')}
 ID: ${data.id}
   `.trim();
@@ -88,12 +336,11 @@ ID: ${data.id}
   }
 }
 
-// Email sender using Resend
+// Email sender
 async function sendEmail(to, subject, html) {
   if (!CONFIG.RESEND_API_KEY) {
     console.log('⚠️ Resend not configured');
     console.log('Email would be sent to:', to);
-    console.log('Subject:', subject);
     return;
   }
 
@@ -113,127 +360,12 @@ async function sendEmail(to, subject, html) {
     });
 
     if (response.ok) {
-      console.log('✅ Email sent via Resend');
+      console.log('✅ Email sent');
     } else {
-      console.error('❌ Resend failed:', await response.text());
+      console.error('❌ Email failed:', await response.text());
     }
   } catch (error) {
     console.error('❌ Email error:', error.message);
-  }
-}
-
-// Email template
-function getConfirmationEmailHTML(data, lang = 'tr') {
-  if (lang === 'tr') {
-    return `
-      <!DOCTYPE html>
-      <html>
-      <head>
-        <style>
-          body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
-          .container { max-width: 600px; margin: 0 auto; padding: 20px; }
-          .header { background: linear-gradient(135deg, #1e3a8a 0%, #0f172a 100%); color: white; padding: 30px; text-align: center; border-radius: 10px 10px 0 0; }
-          .content { background: #f8fafc; padding: 30px; border-radius: 0 0 10px 10px; }
-          .footer { text-align: center; margin-top: 30px; color: #64748b; font-size: 14px; }
-          .highlight { background: #dbeafe; padding: 15px; border-left: 4px solid #1e3a8a; border-radius: 4px; margin: 20px 0; }
-        </style>
-      </head>
-      <body>
-        <div class="container">
-          <div class="header">
-            <h1>Başvurunuz Alındı 🎯</h1>
-          </div>
-          <div class="content">
-            <p>Sayın <strong>${data.name}</strong>,</p>
-            
-            <p>ClaimSolver'a başvurunuz için teşekkür ederiz. Dosyanız uzman ekibimize ulaştı ve inceleme sürecine alındı.</p>
-            
-            <h3>📋 Başvuru Detayları:</h3>
-            <ul>
-              <li><strong>Hizmet Türü:</strong> ${data.serviceType}</li>
-              ${data.company ? `<li><strong>Şirket:</strong> ${data.company}</li>` : ''}
-              <li><strong>Email:</strong> ${data.email}</li>
-              ${data.phone ? `<li><strong>Telefon:</strong> ${data.phone}</li>` : ''}
-            </ul>
-
-            <div class="highlight">
-              <h3>⏰ Sonraki Adımlar:</h3>
-              <ol>
-                <li>Uzman ekibimiz dosyanızı 24 saat içinde detaylı olarak inceleyecek</li>
-                <li>Size kapsamlı analiz raporu göndereceğiz</li>
-                <li>Sorularınız için info@claimsolver.co adresinden bize ulaşabilirsiniz</li>
-              </ol>
-            </div>
-
-            <p style="margin-top: 30px;">
-              <strong>💡 İlk analiz tamamen ücretsizdir.</strong> Detaylı raporlar ve hukuki destek için fiyatlandırma durumunuza göre belirlenecektir.
-            </p>
-
-            <div class="footer">
-              <p><strong>ClaimSolver</strong><br>
-              AI Destekli Sigorta Hukuku Danışmanlığı</p>
-              <p>📧 info@claimsolver.co | 🌐 claimsolver.co</p>
-            </div>
-          </div>
-        </div>
-      </body>
-      </html>
-    `;
-  } else {
-    return `
-      <!DOCTYPE html>
-      <html>
-      <head>
-        <style>
-          body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
-          .container { max-width: 600px; margin: 0 auto; padding: 20px; }
-          .header { background: linear-gradient(135deg, #1e3a8a 0%, #0f172a 100%); color: white; padding: 30px; text-align: center; border-radius: 10px 10px 0 0; }
-          .content { background: #f8fafc; padding: 30px; border-radius: 0 0 10px 10px; }
-          .footer { text-align: center; margin-top: 30px; color: #64748b; font-size: 14px; }
-          .highlight { background: #dbeafe; padding: 15px; border-left: 4px solid #1e3a8a; border-radius: 4px; margin: 20px 0; }
-        </style>
-      </head>
-      <body>
-        <div class="container">
-          <div class="header">
-            <h1>Application Received 🎯</h1>
-          </div>
-          <div class="content">
-            <p>Dear <strong>${data.name}</strong>,</p>
-            
-            <p>Thank you for your application to ClaimSolver. Your file has been received and is under review.</p>
-            
-            <h3>📋 Application Details:</h3>
-            <ul>
-              <li><strong>Service Type:</strong> ${data.serviceType}</li>
-              ${data.company ? `<li><strong>Company:</strong> ${data.company}</li>` : ''}
-              <li><strong>Email:</strong> ${data.email}</li>
-              ${data.phone ? `<li><strong>Phone:</strong> ${data.phone}</li>` : ''}
-            </ul>
-
-            <div class="highlight">
-              <h3>⏰ Next Steps:</h3>
-              <ol>
-                <li>Our expert team will review your file within 24 hours</li>
-                <li>We will send you a comprehensive analysis report</li>
-                <li>Contact us at info@claimsolver.co for questions</li>
-              </ol>
-            </div>
-
-            <p style="margin-top: 30px;">
-              <strong>💡 Initial analysis is completely free.</strong> Pricing for detailed reports will be determined based on your case.
-            </p>
-
-            <div class="footer">
-              <p><strong>ClaimSolver</strong><br>
-              AI-Powered Insurance Law Consulting</p>
-              <p>📧 info@claimsolver.co | 🌐 claimsolver.co</p>
-            </div>
-          </div>
-        </div>
-      </body>
-      </html>
-    `;
   }
 }
 
@@ -243,16 +375,15 @@ app.post('/api/submit-claim', upload.single('file'), async (req, res) => {
     const { name, company, email, phone, serviceType, description, language } = req.body;
     const file = req.file;
 
-    console.log('📝 New submission:', { name, email, serviceType });
+    console.log('📝 New submission:', { name, email, serviceType, hasFile: !!file });
 
     // Validate
     if (!name || !email || !serviceType) {
-  console.log('Validation failed:', { name, email, serviceType, description });
-  return res.status(400).json({
-    success: false,
-    error: 'Zorunlu alanlar eksik'
-  });
-}
+      return res.status(400).json({
+        success: false,
+        error: 'Zorunlu alanlar eksik'
+      });
+    }
 
     // Create submission
     const submission = {
@@ -262,35 +393,42 @@ app.post('/api/submit-claim', upload.single('file'), async (req, res) => {
       email,
       phone: phone || '',
       serviceType,
-      description,
+      description: description || '',
       hasFile: !!file,
       fileName: file ? file.originalname : null,
       fileSize: file ? file.size : null,
       language: language || 'tr',
       timestamp: new Date().toISOString(),
-      status: 'pending'
+      status: 'pending',
+      paymentStatus: 'Ödeme bekliyor'
     };
 
     submissions.push(submission);
 
+    // Analyze with Claude API
+    console.log('🤖 Analyzing with Claude...');
+    const analysis = await analyzeWithClaude(
+      serviceType,
+      description,
+      file ? file.buffer : null,
+      language || 'tr'
+    );
+
+    console.log('✅ Analysis complete:', analysis);
+
     // Send notifications (non-blocking)
     Promise.all([
-      sendTelegramNotification(submission),
-      sendEmail(
-        email,
-        language === 'en' ? 'Application Received - ClaimSolver' : 'Başvurunuz Alındı - ClaimSolver',
-        getConfirmationEmailHTML(submission, language || 'tr')
-      )
+      sendTelegramNotification(submission, analysis)
     ]).catch(err => console.error('Notification error:', err));
 
-    console.log('✅ Submission processed:', submission.id);
-
+    // Return analysis to frontend
     res.json({
       success: true,
-      message: language === 'en' 
-        ? 'Your application has been received. We will contact you within 24 hours.'
-        : 'Başvurunuz alındı. 24 saat içinde size dönüş yapacağız.',
-      submissionId: submission.id
+      submissionId: submission.id,
+      analysis: {
+        successProbability: analysis.successProbability,
+        summary: analysis.summary
+      }
     });
 
   } catch (error) {
