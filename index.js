@@ -238,6 +238,74 @@ async function analyzeWithClaude(serviceType, description, fileBuffer, language 
   }
 }
 
+// Email notification (Resend)
+async function sendEmailNotification(data, analysis) {
+  if (!CONFIG.RESEND_API_KEY) {
+    console.log('⚠️ Resend not configured');
+    return;
+  }
+
+  const emailContent = {
+    from: 'ClaimSolver <info@claimsolver.co>',
+    to: data.email,
+    subject: data.language === 'tr' 
+      ? 'ClaimSolver - Başvurunuz Alındı ✅' 
+      : 'ClaimSolver - Application Received ✅',
+    html: data.language === 'tr' ? `
+      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 2rem;">
+        <h2 style="color: #1e3a8a;">Başvurunuz Alındı!</h2>
+        <p>Merhaba ${data.name},</p>
+        <p>ClaimSolver'a başvurunuz için teşekkür ederiz.</p>
+        <div style="background: #eff6ff; padding: 1.5rem; border-radius: 0.5rem; margin: 1.5rem 0;">
+          <h3 style="color: #1e3a8a; margin-top: 0;">📊 Ön Analiz Sonucu</h3>
+          <p><strong>Başarı İhtimali:</strong> %${analysis.successProbability}</p>
+          <p>${analysis.summary}</p>
+        </div>
+        <p>Uzman ekibimiz dosyanızı <strong>24 saat içinde</strong> detaylı olarak inceleyecek ve size geri dönüş yapacaktır.</p>
+        <p>Sorularınız için: <a href="mailto:info@claimsolver.co">info@claimsolver.co</a></p>
+        <hr style="margin: 2rem 0; border: none; border-top: 1px solid #e2e8f0;">
+        <p style="color: #64748b; font-size: 0.875rem;">Bu otomatik bir emaildir.</p>
+      </div>
+    ` : `
+      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 2rem;">
+        <h2 style="color: #1e3a8a;">Application Received!</h2>
+        <p>Hello ${data.name},</p>
+        <p>Thank you for your application to ClaimSolver.</p>
+        <div style="background: #eff6ff; padding: 1.5rem; border-radius: 0.5rem; margin: 1.5rem 0;">
+          <h3 style="color: #1e3a8a; margin-top: 0;">📊 Preliminary Analysis</h3>
+          <p><strong>Success Probability:</strong> ${analysis.successProbability}%</p>
+          <p>${analysis.summary}</p>
+        </div>
+        <p>Our expert team will review your file in detail within <strong>24 hours</strong>.</p>
+        <p>Questions: <a href="mailto:info@claimsolver.co">info@claimsolver.co</a></p>
+        <hr style="margin: 2rem 0; border: none; border-top: 1px solid #e2e8f0;">
+        <p style="color: #64748b; font-size: 0.875rem;">This is an automated email.</p>
+      </div>
+    `
+  };
+
+  try {
+    const response = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${CONFIG.RESEND_API_KEY}`
+      },
+      body: JSON.stringify(emailContent)
+    });
+
+    if (response.ok) {
+      const result = await response.json();
+      console.log('✅ Email sent:', result.id);
+    } else {
+      const error = await response.text();
+      console.error('❌ Email failed:', error);
+    }
+  } catch (error) {
+    console.error('❌ Email error:', error.message);
+  }
+}
+
 // Telegram notification
 async function sendTelegramNotification(data, analysis) {
   if (!CONFIG.TELEGRAM_BOT_TOKEN || !CONFIG.TELEGRAM_CHAT_ID) {
