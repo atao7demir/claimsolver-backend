@@ -3,6 +3,14 @@ const express = require('express');
 const cors = require('cors');
 const multer = require('multer');
 
+const cloudinary = require('cloudinary').v2;
+
+cloudinary.config({
+  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+  api_key: process.env.CLOUDINARY_API_KEY,
+  api_secret: process.env.CLOUDINARY_API_SECRET
+});
+
 const app = express();
 const PORT = process.env.PORT || 3001;
 
@@ -460,6 +468,25 @@ app.post('/api/submit-claim', upload.single('file'), async (req, res) => {
     };
 
     submissions.push(submission);
+
+    // Cloudinary'e dosya yükle
+let fileUrl = null;
+if (file) {
+  try {
+    const b64 = file.buffer.toString('base64');
+    const dataUri = `data:${file.mimetype};base64,${b64}`;
+    const uploadResult = await cloudinary.uploader.upload(dataUri, {
+      folder: 'claimsolver',
+      resource_type: 'auto',
+      public_id: `${submission.id}_${file.originalname}`
+    });
+    fileUrl = uploadResult.secure_url;
+    submission.fileUrl = fileUrl;
+    console.log('✅ File uploaded to Cloudinary:', fileUrl);
+  } catch (err) {
+    console.error('❌ Cloudinary upload error:', err.message);
+  }
+}
 
     const analysis = await analyzeWithClaude(
       serviceType, description,
