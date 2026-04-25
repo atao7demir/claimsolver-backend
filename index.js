@@ -484,6 +484,15 @@ app.post('/api/submit-claim', upload.single('file'), async (req, res) => {
     };
 
     submissions.push(submission);
+    // MongoDB'ye kaydet
+if (db) {
+  try {
+    await db.collection('submissions').insertOne({...submission});
+    console.log('✅ Saved to MongoDB:', submission.id);
+  } catch (err) {
+    console.error('❌ MongoDB save error:', err.message);
+  }
+}
 
     // Cloudinary'e dosya yükle
 let fileUrl = null;
@@ -536,8 +545,17 @@ app.get('/admin', (req, res) => {
   res.sendFile(__dirname + '/admin.html');
 });
 
-app.get('/api/submissions', (req, res) => {
-  res.json({ success: true, count: submissions.length, submissions });
+app.get('/api/submissions', async (req, res) => {
+  try {
+    if (db) {
+      const subs = await db.collection('submissions').find({}).sort({timestamp: -1}).toArray();
+      res.json({ success: true, count: subs.length, submissions: subs });
+    } else {
+      res.json({ success: true, count: submissions.length, submissions });
+    }
+  } catch (err) {
+    res.json({ success: true, count: submissions.length, submissions });
+  }
 });
 
 app.get('/api/health', (req, res) => {
