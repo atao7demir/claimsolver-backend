@@ -418,8 +418,9 @@ app.post('/api/submit-claim', upload.single('file'), async (req, res) => {
 
     // Send notifications (non-blocking)
     Promise.all([
-      sendTelegramNotification(submission, analysis)
-    ]).catch(err => console.error('Notification error:', err));
+  sendTelegramNotification(submission, analysis),
+  sendEmailNotification(submission, analysis)
+]).catch(err => console.error('Notification error:', err));
 
     // Return analysis to frontend
     res.json({
