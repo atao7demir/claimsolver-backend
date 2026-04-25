@@ -515,6 +515,11 @@ if (file) {
   }
 });
 
+// Admin panel
+app.get('/admin', (req, res) => {
+  res.sendFile(__dirname + '/admin.html');
+});
+
 app.get('/api/submissions', (req, res) => {
   res.json({ success: true, count: submissions.length, submissions });
 });
