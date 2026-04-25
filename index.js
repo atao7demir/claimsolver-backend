@@ -5,6 +5,22 @@ const multer = require('multer');
 
 const cloudinary = require('cloudinary').v2;
 
+const { MongoClient } = require('mongodb');
+
+const mongoClient = new MongoClient(process.env.MONGODB_URI);
+let db;
+
+async function connectDB() {
+  try {
+    await mongoClient.connect();
+    db = mongoClient.db(process.env.MONGODB_DB || 'claimsolver');
+    console.log('✅ MongoDB connected');
+  } catch (err) {
+    console.error('❌ MongoDB connection error:', err.message);
+  }
+}
+connectDB();
+
 cloudinary.config({
   cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
   api_key: process.env.CLOUDINARY_API_KEY,
