@@ -411,7 +411,7 @@ ${data.phone ? `📞 ${data.phone}` : ''}
 
 📋 Hizmet: ${data.serviceType}
 📝 Açıklama: ${data.description ? data.description.substring(0, 300) : 'Belirtilmedi'}
-${data.hasFile ? `📎 Dosya: ${data.fileName}` : '⚠️ Dosya yok'}
+${data.hasFile ? `📎 Dosya: ${data.fileName}${data.fileUrl ? '\n🔗 Link: ' + data.fileUrl : ''}` : '⚠️ Dosya yok'}
 
 ━━━━━━━━━━━━━━━━━━━━
 🤖 AI ANALİZİ:
